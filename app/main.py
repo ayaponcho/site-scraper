@@ -1,10 +1,12 @@
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db import check_db
+from app.db_errors import raise_if_db_error
 from app.routes import articles, sites
 from app import service
 
@@ -24,6 +26,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Réponse JSON + CORS même sur erreur DB (évite « Failed to fetch » opaque)."""
+    if isinstance(exc, HTTPException):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    try:
+        raise_if_db_error(exc)
+    except HTTPException as http_exc:
+        return JSONResponse(status_code=http_exc.status_code, content={"detail": http_exc.detail})
+    logger.exception("Unhandled error on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 app.include_router(sites.router, prefix="/v1")
 app.include_router(articles.router, prefix="/v1")
