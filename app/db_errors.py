@@ -1,6 +1,6 @@
 import psycopg2
+import psycopg2.errors
 from fastapi import HTTPException
-
 _MIGRATION_HINT = (
     "Appliquez la migration backend : "
     "migrations/20260526_site_scraper.sql (tables scraper_sites, scraper_articles)."

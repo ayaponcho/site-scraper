@@ -76,10 +76,22 @@ def _extract_insights_from_soup(soup: BeautifulSoup) -> str | None:
 
 
 async def fetch_html(url: str) -> str:
+    headers = {
+        "User-Agent": settings.user_agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    parsed = urlparse(url)
+    if parsed.netloc.endswith("gartner.com"):
+        headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+
     async with httpx.AsyncClient(
         timeout=settings.scrape_timeout_seconds,
         follow_redirects=True,
-        headers={"User-Agent": settings.user_agent, "Accept-Language": "en-US,en;q=0.9"},
+        headers=headers,
     ) as client:
         response = await client.get(url)
         response.raise_for_status()

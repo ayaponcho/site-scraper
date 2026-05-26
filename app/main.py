@@ -19,6 +19,20 @@ app = FastAPI(
 )
 
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+
+
+def _cors_headers(request: Request) -> dict[str, str]:
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+    if origins and origin not in origins and "*" not in origins:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+    }
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins or ["*"],
@@ -32,13 +46,25 @@ app.add_middleware(
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Réponse JSON + CORS même sur erreur DB (évite « Failed to fetch » opaque)."""
     if isinstance(exc, HTTPException):
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=_cors_headers(request),
+        )
     try:
         raise_if_db_error(exc)
     except HTTPException as http_exc:
-        return JSONResponse(status_code=http_exc.status_code, content={"detail": http_exc.detail})
+        return JSONResponse(
+            status_code=http_exc.status_code,
+            content={"detail": http_exc.detail},
+            headers=_cors_headers(request),
+        )
     logger.exception("Unhandled error on %s", request.url.path)
-    return JSONResponse(status_code=500, content={"detail": str(exc)})
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+        headers=_cors_headers(request),
+    )
 
 app.include_router(sites.router, prefix="/v1")
 app.include_router(articles.router, prefix="/v1")

@@ -2,18 +2,21 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app import service
 from app.db_errors import raise_if_db_error
+from app.scrape_errors import raise_http_for_scrape_error
 from app.schemas import ScrapeResult, SiteCreate, SiteOut, SiteUpdate
 
 router = APIRouter(prefix="/sites", tags=["sites"])
 
 
-@router.get("", response_model=dict)
+@router.get("")
 def get_sites():
     try:
         sites = service.list_sites()
+    except HTTPException:
+        raise
     except Exception as exc:
         raise_if_db_error(exc)
-    return {"sites": [SiteOut(**site) for site in sites]}
+    return {"sites": sites}
 
 
 @router.post("", response_model=dict, status_code=201)
@@ -78,8 +81,14 @@ async def scrape_one(site_id: int, background: BackgroundTasks, sync: bool = Que
     if sync:
         try:
             return ScrapeResult(**await service.scrape_site(site_id))
+        except HTTPException:
+            raise
         except Exception as exc:
-            raise_if_db_error(exc)
+            try:
+                raise_if_db_error(exc)
+            except HTTPException:
+                raise
+            raise_http_for_scrape_error(exc)
 
     background.add_task(_run_scrape, site_id)
     return ScrapeResult(site_id=site_id, new_articles=0, updated_articles=0, total_found=0)
