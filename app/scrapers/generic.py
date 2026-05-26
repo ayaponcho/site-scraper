@@ -92,6 +92,7 @@ async def fetch_html(url: str) -> str:
         timeout=settings.scrape_timeout_seconds,
         follow_redirects=True,
         headers=headers,
+        proxy=settings.scrape_http_proxy or None,
     ) as client:
         response = await client.get(url)
         response.raise_for_status()
