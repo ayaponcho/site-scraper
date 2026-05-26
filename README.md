@@ -55,6 +55,25 @@ Pages :
 
 > Note : certains sites (dont Gartner) peuvent bloquer les requêtes HTTP simples. Pour la prod, prévoir Playwright headless dans un profil Docker séparé.
 
-## Intégration tgm-deploy (plus tard)
+## Intégration tgm-deploy
 
-Ajouter un service `site-scraper` dans `docker-compose.prod.yml` (port 3020) et un snippet nginx `/site-scraper-api/`.
+1. Service `site-scraper` dans `tgm-deploy/docker-compose.prod.yml` (déjà prévu).
+2. Nginx : copier `tgm-deploy/nginx/snippets/site-scraper-proxy.conf.example` dans le vhost front.
+3. Migration : `backend/migrations/20260526_site_scraper.sql` sur la base `sendit`.
+4. Clone serveur : `git clone git@github.com:ayaponcho/site-scraper.git` au même niveau que `tgm-deploy`.
+
+## GitHub Actions
+
+| Workflow | Déclencheur | Rôle |
+|----------|-------------|------|
+| `ci.yml` | push / PR sur main | compileall + docker build |
+| `deploy-ssh.yml` | push main (app/**) ou manuel | SSH → pull + rebuild sur OVH |
+
+**Secrets** (repo `site-scraper` → Settings → Secrets) — mêmes que les autres projets :
+
+- `SSH_HOST`
+- `SSH_USER`
+- `SSH_PRIVATE_KEY`
+- `DEPLOY_PATH` — chemin de **tgm-deploy** (ex. `/home/debian/tgm-deploy`)
+
+Optionnel : `SSH_PORT` (défaut 22).

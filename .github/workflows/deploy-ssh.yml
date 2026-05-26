@@ -1,0 +1,121 @@
+# =============================================================================
+# Déploiement site-scraper (SSH → docker compose tgm-deploy)
+# =============================================================================
+# Secrets GitHub (mêmes noms que emailBackend / haystack) :
+#   SSH_HOST, SSH_USER, SSH_PRIVATE_KEY
+#   DEPLOY_PATH — chemin ABSOLU de tgm-deploy sur le serveur (ex. /home/debian/tgm-deploy)
+# Optionnel : SSH_PORT (défaut 22)
+#
+# Prérequis serveur :
+#   - clone sibling : /home/debian/site-scraper  (git@github.com:ayaponcho/site-scraper.git)
+#   - service `site-scraper` dans tgm-deploy/docker-compose.prod.yml
+#   - migration SQL appliquée sur sendit (backend/migrations/20260526_site_scraper.sql)
+#   - nginx : /site-scraper-api/ dans tgm-deploy/nginx/conf.d/default.conf
+# =============================================================================
+
+name: Deploy site-scraper (SSH + Docker)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: deploy-site-scraper-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check (compileall)
+        run: python -m compileall -q app
+
+      - name: Docker build
+        run: docker build -t site-scraper:ci .
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH — pull site-scraper + rebuild service site-scraper
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
+            echo "=== Déploiement site-scraper ==="
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            if [ -z "$DEPLOY_PATH" ]; then
+              echo "Erreur: secret DEPLOY_PATH vide (chemin tgm-deploy)"
+              exit 1
+            fi
+            if [ ! -f "$DEPLOY_PATH/docker-compose.prod.yml" ]; then
+              echo "Erreur: docker-compose.prod.yml introuvable dans DEPLOY_PATH=$DEPLOY_PATH"
+              exit 1
+            fi
+            PARENT="$(cd "$DEPLOY_PATH/.." && pwd)"
+            SS_DIR="$PARENT/site-scraper"
+            if [ ! -d "$SS_DIR/.git" ]; then
+              echo "Erreur: clone attendu à $SS_DIR"
+              echo "  git clone git@github.com:ayaponcho/site-scraper.git $SS_DIR"
+              exit 1
+            fi
+            echo "→ Mise à jour tgm-deploy…"
+            cd "$DEPLOY_PATH"
+            git fetch origin
+            git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
+            git reset --hard origin/main 2>/dev/null || git reset --hard origin/master 2>/dev/null || true
+            echo "→ Mise à jour code site-scraper…"
+            cd "$SS_DIR"
+            git fetch origin
+            git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
+            git reset --hard origin/main 2>/dev/null || git reset --hard origin/master
+            if [ ! -f "$SS_DIR/Dockerfile" ]; then
+              echo "Erreur: Dockerfile introuvable dans $SS_DIR"
+              exit 1
+            fi
+            cd "$DEPLOY_PATH"
+            COMPOSE_FILE="docker-compose.prod.yml"
+            DC=(docker compose -f "$COMPOSE_FILE")
+            if [ -f ../.env ]; then
+              DC=(docker compose --env-file ../.env -f "$COMPOSE_FILE")
+            fi
+            if ! "${DC[@]}" config --services 2>/dev/null | tr -d '\r' | grep -qx 'site-scraper'; then
+              echo "Erreur: service site-scraper absent de docker-compose.prod.yml — mettre à jour tgm-deploy."
+              exit 1
+            fi
+            echo "→ Docker: build + up site-scraper"
+            "${DC[@]}" build --no-cache site-scraper
+            "${DC[@]}" up -d site-scraper
+            echo "→ Healthcheck interne…"
+            sleep 5
+            docker exec tgm-deploy-site-scraper python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/health').read().decode())" || true
+            echo "→ État :"
+            "${DC[@]}" ps site-scraper
+            echo "→ Reload nginx (proxy /site-scraper-api/)…"
+            docker exec nginx nginx -s reload 2>/dev/null || true
+            echo "=== Terminé ==="
