@@ -6,6 +6,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.config import settings
+from app.scrape_errors import raise_http_for_scrape_error
 from app.scrapers.base import ScrapedArticle
 
 logger = logging.getLogger(__name__)
@@ -94,8 +95,11 @@ async def fetch_html(url: str) -> str:
         headers=headers,
         proxy=settings.scrape_http_proxy or None,
     ) as client:
-        response = await client.get(url)
-        response.raise_for_status()
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+        except Exception as exc:
+            raise_http_for_scrape_error(exc)
         return response.text
 
 

@@ -12,6 +12,8 @@ from app import service
 
 logger = logging.getLogger(__name__)
 
+APP_VERSION = "0.1.2"
+
 app = FastAPI(
     title="Site Scraper API",
     description="Scraping de sites d'insights (Gartner, etc.) — prototype",
@@ -72,7 +74,7 @@ app.include_router(articles.router, prefix="/v1")
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "database": check_db()}
+    return {"status": "ok", "database": check_db(), "version": APP_VERSION}
 
 
 @app.post("/v1/scrape-all")
