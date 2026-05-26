@@ -1,6 +1,8 @@
 import httpx
 from fastapi import HTTPException
 
+from app.db_errors import raise_if_db_error
+
 
 def raise_http_for_scrape_error(exc: Exception) -> None:
     """Convertit erreurs réseau / HTTP du scrape en réponse JSON lisible par le front."""
@@ -33,3 +35,15 @@ def raise_http_for_scrape_error(exc: Exception) -> None:
             detail=f"Erreur réseau lors du scrape : {exc}",
         ) from exc
     raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def rethrow_as_http(exc: Exception) -> None:
+    """Erreurs BDD puis scrape/réseau → HTTPException JSON pour le front."""
+    if isinstance(exc, HTTPException):
+        raise exc
+    try:
+        raise_if_db_error(exc)
+    except HTTPException:
+        raise
+    except Exception as err:
+        raise_http_for_scrape_error(err)

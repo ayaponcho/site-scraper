@@ -6,8 +6,8 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db import check_db
-from app.db_errors import raise_if_db_error
 from app.routes import articles, sites
+from app.scrape_errors import rethrow_as_http
 from app import service
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
             headers=_cors_headers(request),
         )
     try:
-        raise_if_db_error(exc)
+        rethrow_as_http(exc)
     except HTTPException as http_exc:
         return JSONResponse(
             status_code=http_exc.status_code,
