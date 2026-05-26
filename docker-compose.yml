@@ -1,0 +1,37 @@
+# Dev local autonome : PostgreSQL + API scraper
+# Usage : docker compose up --build
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: site-scraper-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sendit
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - site_scraper_pgdata:/var/lib/postgresql/data
+      - ../backend/migrations/20260526_site_scraper.sql:/docker-entrypoint-initdb.d/01_site_scraper.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sendit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  site-scraper:
+    build: .
+    container_name: site-scraper-dev
+    ports:
+      - "127.0.0.1:3020:8080"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/sendit
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  site_scraper_pgdata:
