@@ -28,4 +28,7 @@ def raise_if_db_error(exc: Exception) -> None:
                 status_code=503,
                 detail=f"Schéma scraper absent ou incomplet. {_MIGRATION_HINT}",
             ) from exc
-    raise exc
+    # Erreurs scrape/réseau (403 Gartner, etc.) → JSON 502, pas un 500 ASGI
+    from app.scrape_errors import raise_http_for_scrape_error
+
+    raise_http_for_scrape_error(exc)
