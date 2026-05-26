@@ -31,7 +31,18 @@ def check_db() -> bool:
     try:
         with db_cursor() as cur:
             cur.execute("SELECT 1")
-        return True
+            cur.execute(
+                """
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM information_schema.tables
+                  WHERE table_schema = 'public'
+                    AND table_name = 'scraper_sites'
+                ) AS ok
+                """
+            )
+            row = cur.fetchone()
+            return bool(row and row.get("ok"))
     except Exception as exc:
         logger.warning("Database unavailable: %s", exc)
         return False
