@@ -293,16 +293,25 @@ async def scrape_site(site_id: int, fetch_insights: bool = True) -> dict:
     }
 
 
+def _field_aliases(key: str) -> list[str]:
+    if key.startswith("auto_"):
+        bare = key[5:]
+        return [key, bare] if bare else [key]
+    return [key, f"auto_{key}"]
+
+
 def _field_value(fields: list[dict], key: str) -> str | None:
+    aliases = set(_field_aliases(key))
     for row in fields:
-        if row.get("key") == key and row.get("value") is not None:
+        if row.get("key") in aliases and row.get("value") is not None:
             return str(row["value"])
     return None
 
 
 def _field_confidence(fields: list[dict], key: str) -> float:
+    aliases = set(_field_aliases(key))
     for row in fields:
-        if row.get("key") == key:
+        if row.get("key") in aliases:
             return float(row.get("confidence") or 0)
     return 0.0
 

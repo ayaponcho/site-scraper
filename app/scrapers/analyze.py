@@ -292,8 +292,9 @@ def _field(
     confidence: float,
     raw: str | None = None,
 ) -> dict[str, Any]:
+    auto_key = key if key.startswith("auto_") else f"auto_{key}"
     row: dict[str, Any] = {
-        "key": key,
+        "key": auto_key,
         "label": label,
         "value": value,
         "source": source,
