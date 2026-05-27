@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -41,6 +41,7 @@ class ArticleOut(BaseModel):
     insights: str | None
     published_at: datetime | None
     scraped_at: datetime
+    analysis_json: dict[str, Any] | None = None
 
 
 class ScrapeResult(BaseModel):
@@ -57,6 +58,19 @@ class AnalysisFieldOut(BaseModel):
     raw: str | None = None
     source: str
     confidence: float
+
+
+class AnalysisFieldUpdate(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    label: str | None = Field(default=None, max_length=200)
+    value: str | int | float | None = None
+    raw: str | None = None
+    source: str | None = Field(default="manual", max_length=200)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class AnalysisFieldsUpdateBody(BaseModel):
+    fields: list[AnalysisFieldUpdate] = Field(min_length=1)
 
 
 class AnalysisDateOut(BaseModel):

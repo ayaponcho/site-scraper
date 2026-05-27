@@ -1,8 +1,10 @@
+import json
 import logging
 from datetime import datetime, timezone
 
-from app.db import db_cursor
-from app.scrapers.analyze import analyze_article_page
+import psycopg2.extras
+
+from app.db import db_cursorfrom app.scrapers.analyze import analyze_article_page
 from app.scrapers.base import ScrapedArticle
 from app.scrapers.gartner import scrape_gartner_listing
 from app.scrapers.generic import scrape_generic_listing
@@ -305,7 +307,13 @@ def _field_confidence(fields: list[dict], key: str) -> float:
     return 0.0
 
 
-def _persist_analysis(article_id: int, fields: list[dict]) -> None:
+def _persist_analysis(
+    article_id: int,
+    fields: list[dict],
+    analysis_payload: dict,
+    *,
+    force_columns: bool = False,
+) -> None:
     published_raw = _field_value(fields, "published_at")
     insights = _field_value(fields, "insights")
     title = _field_value(fields, "title")
@@ -319,30 +327,114 @@ def _persist_analysis(article_id: int, fields: list[dict]) -> None:
         except ValueError:
             published_at = None
 
+    analysis_json = json.loads(
+        json.dumps(analysis_payload, default=lambda o: o.isoformat() if isinstance(o, datetime) else str(o))
+    )
+
+    apply_title = title if (force_columns or title_conf >= 0.9) else None
+
     with db_cursor() as cur:
-        cur.execute(
-            """
-            UPDATE scraper_articles
-            SET
-              published_at = COALESCE(%s, published_at),
-              insights = COALESCE(%s, insights),
-              title = CASE WHEN %s AND %s IS NOT NULL THEN %s ELSE title END,
-              scraped_at = %s
-            WHERE id = %s
-            """,
-            (
-                published_at,
-                insights,
-                title_conf >= 0.9,
-                title,
-                title,
-                now,
-                article_id,
-            ),
-        )
+        if force_columns:
+            cur.execute(
+                """
+                UPDATE scraper_articles
+                SET
+                  published_at = COALESCE(%s, published_at),
+                  insights = COALESCE(%s, insights),
+                  title = COALESCE(%s, title),
+                  analysis_json = %s,
+                  scraped_at = %s
+                WHERE id = %s
+                """,
+                (
+                    published_at,
+                    insights,
+                    apply_title,
+                    psycopg2.extras.Json(analysis_json),
+                    now,
+                    article_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE scraper_articles
+                SET
+                  published_at = COALESCE(%s, published_at),
+                  insights = COALESCE(%s, insights),
+                  title = CASE WHEN %s AND %s IS NOT NULL THEN %s ELSE title END,
+                  analysis_json = %s,
+                  scraped_at = %s
+                WHERE id = %s
+                """,
+                (
+                    published_at,
+                    insights,
+                    title_conf >= 0.9,
+                    title,
+                    title,
+                    psycopg2.extras.Json(analysis_json),
+                    now,
+                    article_id,
+                ),
+            )
 
 
-async def analyze_article(article_id: int, persist: bool = False) -> dict:
+def _normalize_analysis_field(row: dict) -> dict:
+    key = (row.get("key") or "").strip()
+    if not key:
+        raise ValueError("Chaque champ doit avoir une clé non vide")
+    try:
+        confidence = float(row.get("confidence", 1.0))
+    except (TypeError, ValueError):
+        confidence = 1.0
+    confidence = max(0.0, min(1.0, confidence))
+    value = row.get("value")
+    if value == "":
+        value = None
+    normalized: dict = {
+        "key": key,
+        "label": (row.get("label") or key).strip(),
+        "value": value,
+        "source": (row.get("source") or "manual").strip(),
+        "confidence": round(confidence, 2),
+    }
+    raw = row.get("raw")
+    if raw:
+        normalized["raw"] = str(raw).strip()
+    return normalized
+
+
+def update_article_analysis_fields(article_id: int, fields: list[dict]) -> dict:
+    article = get_article(article_id)
+    if not article:
+        raise ValueError("Article not found")
+
+    normalized = [_normalize_analysis_field(f) for f in fields]
+    now = datetime.now(timezone.utc)
+
+    base = article.get("analysis_json") or {}
+    if isinstance(base, str):
+        base = json.loads(base)
+
+    result = {
+        "article_id": article_id,
+        "url": article["url"],
+        "analyzed_at": now,
+        "persisted": True,
+        "http_status": base.get("http_status", 200),
+        "fields": normalized,
+        "dates_found": base.get("dates_found") or [],
+        "sections": base.get("sections") or [],
+        "tags": base.get("tags") or [],
+        "warnings": base.get("warnings") or [],
+    }
+
+    _persist_analysis(article_id, normalized, result, force_columns=True)
+    return result
+
+
+async def analyze_article(article_id: int, persist: bool = True) -> dict:
     article = get_article(article_id)
     if not article:
         raise ValueError("Article not found")
@@ -350,14 +442,11 @@ async def analyze_article(article_id: int, persist: bool = False) -> dict:
     payload = await analyze_article_page(article["url"])
     analyzed_at = datetime.now(timezone.utc)
 
-    if persist and payload.get("fields"):
-        _persist_analysis(article_id, payload["fields"])
-
-    return {
+    result = {
         "article_id": article_id,
         "url": article["url"],
         "analyzed_at": analyzed_at,
-        "persisted": bool(persist and payload.get("fields")),
+        "persisted": False,
         "http_status": payload.get("http_status", 0),
         "fields": payload.get("fields") or [],
         "dates_found": payload.get("dates_found") or [],
@@ -365,6 +454,12 @@ async def analyze_article(article_id: int, persist: bool = False) -> dict:
         "tags": payload.get("tags") or [],
         "warnings": payload.get("warnings") or [],
     }
+
+    if persist and (result["fields"] or result["dates_found"] or result["sections"]):
+        result["persisted"] = True
+        _persist_analysis(article_id, result["fields"], result)
+
+    return result
 
 
 async def scrape_all_enabled(fetch_insights: bool = True) -> list[dict]:
