@@ -84,7 +84,16 @@ curl -s -X POST "https://email.targetmania.com/site-scraper-api/v1/articles/1/an
 
 ## Deploy manuel (si GitHub Actions bloqué)
 
-Sur le serveur en SSH :
+**Depuis ta machine** (SSH vers le serveur) :
+
+```bash
+ssh debian@TON_SERVEUR
+cd /home/debian/site-scraper
+git pull origin main
+bash scripts/deploy-prod-on-server.sh
+```
+
+Ou commandes une par une :
 
 ```bash
 cd /home/debian/site-scraper
@@ -95,6 +104,13 @@ docker compose -f docker-compose.prod.yml up -d site-scraper
 docker exec tgm-deploy-site-scraper wget -qO- http://127.0.0.1:8080/health
 # doit afficher "version":"0.1.5"
 docker exec nginx nginx -s reload 2>/dev/null || true
+```
+
+**Vérification depuis ton PC** :
+
+```bash
+curl -s https://email.targetmania.com/site-scraper-api/health
+# {"status":"ok","database":true,"version":"0.1.5"}
 ```
 
 ## Dev local
