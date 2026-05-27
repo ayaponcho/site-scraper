@@ -15,7 +15,8 @@ Configurer sur https://github.com/ayaponcho/site-scraper/settings/secrets/action
 | `SSH_PRIVATE_KEY` | Clé privée OpenSSH (PEM) autorisée sur le serveur |
 | `DEPLOY_PATH` | Chemin absolu de tgm-deploy (ex. `/home/debian/tgm-deploy`) |
 | `SSH_PORT` | *(optionnel)* port SSH, défaut 22 |
-| `SSH_PASSPHRASE` | *(optionnel)* passphrase de la clé, **si** `SSH_PRIVATE_KEY` est protégée |
+| `SSH_PASSPHRASE` | *(optionnel)* alias de `SSH_KEY_PASSPHRASE` |
+| `SSH_KEY_PASSPHRASE` | *(optionnel)* passphrase de la clé — **sans espace ni retour ligne en trop** |
 
 ## Erreur SSH fréquente : clé avec passphrase
 
@@ -24,17 +25,18 @@ ssh.ParsePrivateKey: ssh: this private key is passphrase protected
 ssh: handshake failed: ssh: unable to authenticate
 ```
 
-**Cause :** le secret `SSH_PRIVATE_KEY` contient une clé protégée par passphrase, mais GitHub Actions ne peut pas l’utiliser sans `SSH_PASSPHRASE`.
+**Cause :** le secret passphrase est absent, incorrect, ou le workflow utilisé ne déchiffre pas la clé (le paramètre `passphrase:` de appleboy/ssh-action est peu fiable).
 
 **Solutions (choisir une) :**
 
-### Option A — Ajouter le secret passphrase (rapide)
+### Option A — Passphrase via secret (rapide)
 
 1. GitHub → site-scraper → Settings → Secrets → Actions
-2. New secret : `SSH_PASSPHRASE` = passphrase de la clé
-3. Re-lancer le workflow **Deploy site-scraper**
-
-Le workflow lit déjà `passphrase: ${{ secrets.SSH_PASSPHRASE }}`.
+2. Secret `SSH_KEY_PASSPHRASE` (ou `SSH_PASSPHRASE`) = passphrase **exacte** de la clé
+   - pas d’espace avant/après
+   - pas de retour ligne en fin de valeur
+3. **Pousser le dernier commit** sur `main` (le workflow déchiffre la clé avec `ssh-keygen -p`)
+4. Lancer **Run workflow** (pas seulement « Re-run » sur un ancien job — voir ci-dessous)
 
 ### Option B — Clé de déploiement dédiée sans passphrase (recommandé prod)
 
@@ -55,7 +57,16 @@ chmod 600 ~/.ssh/authorized_keys
 Sur GitHub :
 
 1. Mettre à jour `SSH_PRIVATE_KEY` avec le contenu de `tgm_deploy_site_scraper` (clé **privée**, sans passphrase)
-2. Supprimer `SSH_PASSPHRASE` si plus utilisé
+2. Supprimer `SSH_PASSPHRASE` / `SSH_KEY_PASSPHRASE` si plus utilisés
+
+## Re-run vs nouveau workflow
+
+| Action | Comportement |
+|--------|--------------|
+| **Re-run failed jobs** sur un run ancien | Réutilise le **YAML du commit d’origine** — sans correctif SSH récent |
+| **Run workflow** (workflow_dispatch) après push sur `main` | Utilise le **dernier YAML** sur `main` |
+
+Si tu as ajouté `SSH_PASSPHRASE` mais le commit `fix deploy` n’était pas encore sur `origin/main`, le re-run ne pouvait pas marcher.
 
 ## Vérifier le déploiement
 
@@ -64,10 +75,26 @@ Après deploy réussi :
 ```bash
 curl -s https://email.targetmania.com/site-scraper-api/health
 # Attendu : {"status":"ok","database":true,"version":"0.1.5"}
+# Si "version":"0.1.3" → l’ancienne image tourne encore (POST /analyze → 404)
 
 curl -s -X POST "https://email.targetmania.com/site-scraper-api/v1/articles/1/analyze"
-# 404 "Article introuvable" = route OK (article id 1 absent)
-# 404 "Not Found" sans detail article = ancienne version encore active
+# 404 "Article introuvable" = route OK (article id absent)
+# 404 "Not Found" = ancienne version encore active
+```
+
+## Deploy manuel (si GitHub Actions bloqué)
+
+Sur le serveur en SSH :
+
+```bash
+cd /home/debian/site-scraper
+git fetch origin && git reset --hard origin/main
+cd /home/debian/tgm-deploy
+docker compose -f docker-compose.prod.yml build --no-cache site-scraper
+docker compose -f docker-compose.prod.yml up -d site-scraper
+docker exec tgm-deploy-site-scraper wget -qO- http://127.0.0.1:8080/health
+# doit afficher "version":"0.1.5"
+docker exec nginx nginx -s reload 2>/dev/null || true
 ```
 
 ## Dev local

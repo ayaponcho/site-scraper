@@ -1,18 +1,13 @@
 # =============================================================================
 # Déploiement site-scraper (SSH → docker compose tgm-deploy)
 # =============================================================================
-# Secrets GitHub (mêmes noms que emailBackend / haystack) :
-#   SSH_HOST, SSH_USER, SSH_PRIVATE_KEY
-#   DEPLOY_PATH — chemin ABSOLU de tgm-deploy sur le serveur (ex. /home/debian/tgm-deploy)
+# Secrets GitHub :
+#   SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, DEPLOY_PATH
+#   SSH_KEY_PASSPHRASE (ou SSH_PASSPHRASE) — si la clé privée est chiffrée
 # Optionnel : SSH_PORT (défaut 22)
-# Optionnel : SSH_PASSPHRASE — uniquement si SSH_PRIVATE_KEY est protégée par passphrase
-#   (recommandé prod : clé de déploiement DÉDIÉE sans passphrase, voir .github/DEPLOY.md)
 #
-# Prérequis serveur :
-#   - clone sibling : /home/debian/site-scraper  (git@github.com:ayaponcho/site-scraper.git)
-#   - service `site-scraper` dans tgm-deploy/docker-compose.prod.yml
-#   - migration SQL appliquée sur sendit (backend/migrations/20260526_site_scraper.sql)
-#   - nginx : /site-scraper-api/ dans tgm-deploy/nginx/conf.d/default.conf
+# Note : le paramètre `passphrase:` de appleboy/ssh-action est peu fiable.
+# On déchiffre la clé sur le runner (pattern haystack) puis on passe key_path.
 # =============================================================================
 
 name: Deploy site-scraper (SSH + Docker)
@@ -59,13 +54,39 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
+      - id: sshkey
+        name: Préparer la clé SSH (déchiffrer si besoin)
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
+          SSH_PASSPHRASE: ${{ secrets.SSH_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          KEY="$HOME/.ssh/gh_deploy_site_scraper"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$KEY"
+          chmod 600 "$KEY"
+
+          PP="${SSH_KEY_PASSPHRASE:-${SSH_PASSPHRASE:-}}"
+          if [ -n "$PP" ]; then
+            ssh-keygen -p -f "$KEY" -P "$PP" -N "" -q
+            echo "Clé déchiffrée pour cette exécution uniquement."
+          else
+            if ! timeout 8 ssh-keygen -y -f "$KEY" >/dev/null 2>&1; then
+              echo "::error::SSH_PRIVATE_KEY est chiffrée : ajoute le secret SSH_KEY_PASSPHRASE (ou SSH_PASSPHRASE) avec la passphrase exacte de la clé."
+              exit 1
+            fi
+            echo "Clé SSH sans passphrase (OK)."
+          fi
+          echo "key_path=$KEY" >> "$GITHUB_OUTPUT"
+
       - name: SSH — pull site-scraper + rebuild service site-scraper
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          key_path: ${{ steps.sshkey.outputs.key_path }}
           port: ${{ secrets.SSH_PORT || 22 }}
           command_timeout: 30m
           script: |
