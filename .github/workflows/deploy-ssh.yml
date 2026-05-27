@@ -5,6 +5,8 @@
 #   SSH_HOST, SSH_USER, SSH_PRIVATE_KEY
 #   DEPLOY_PATH — chemin ABSOLU de tgm-deploy sur le serveur (ex. /home/debian/tgm-deploy)
 # Optionnel : SSH_PORT (défaut 22)
+# Optionnel : SSH_PASSPHRASE — uniquement si SSH_PRIVATE_KEY est protégée par passphrase
+#   (recommandé prod : clé de déploiement DÉDIÉE sans passphrase, voir .github/DEPLOY.md)
 #
 # Prérequis serveur :
 #   - clone sibling : /home/debian/site-scraper  (git@github.com:ayaponcho/site-scraper.git)
@@ -63,6 +65,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
           port: ${{ secrets.SSH_PORT || 22 }}
           command_timeout: 30m
           script: |
@@ -113,7 +116,9 @@ jobs:
             "${DC[@]}" up -d site-scraper
             echo "→ Healthcheck interne…"
             sleep 5
-            docker exec tgm-deploy-site-scraper python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/health').read().decode())" || true
+            HEALTH=$(docker exec tgm-deploy-site-scraper python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/health').read().decode())" 2>/dev/null || true)
+            echo "$HEALTH"
+            echo "$HEALTH" | grep -q '"version"' && echo "✓ health avec version OK" || echo "⚠ ancienne image — rebuild site-scraper requis"
             echo "→ État :"
             "${DC[@]}" ps site-scraper
             echo "→ Reload nginx (proxy /site-scraper-api/)…"
