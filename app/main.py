@@ -12,7 +12,7 @@ from app import service
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.1.5"
 
 app = FastAPI(
     title="Site Scraper API",

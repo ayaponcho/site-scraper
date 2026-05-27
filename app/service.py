@@ -2,9 +2,11 @@ import logging
 from datetime import datetime, timezone
 
 from app.db import db_cursor
+from app.scrapers.analyze import analyze_article_page
 from app.scrapers.base import ScrapedArticle
 from app.scrapers.gartner import scrape_gartner_listing
 from app.scrapers.generic import scrape_generic_listing
+from app.url_utils import canonical_article_url
 
 logger = logging.getLogger(__name__)
 
@@ -157,12 +159,18 @@ def _upsert_articles(site_id: int, articles: list[ScrapedArticle]) -> tuple[int,
     now = datetime.now(timezone.utc)
 
     with db_cursor() as cur:
+        cur.execute(
+            "SELECT id, title, insights, url FROM scraper_articles WHERE site_id = %s",
+            (site_id,),
+        )
+        by_canonical: dict[str, dict] = {}
+        for row in cur.fetchall():
+            by_canonical[canonical_article_url(row["url"])] = dict(row)
+
         for article in articles:
-            cur.execute(
-                "SELECT id, title, insights FROM scraper_articles WHERE site_id = %s AND url = %s",
-                (site_id, article.url),
-            )
-            existing = cur.fetchone()
+            canon = canonical_article_url(article.url)
+            article.url = canon
+            existing = by_canonical.get(canon)
             if existing:
                 changed = (
                     existing["title"] != article.title
@@ -172,28 +180,37 @@ def _upsert_articles(site_id: int, articles: list[ScrapedArticle]) -> tuple[int,
                     cur.execute(
                         """
                         UPDATE scraper_articles
-                        SET title = %s, insights = COALESCE(%s, insights), scraped_at = %s
+                        SET title = %s, url = %s, insights = COALESCE(%s, insights), scraped_at = %s
                         WHERE id = %s
                         """,
-                        (article.title, article.insights, now, existing["id"]),
+                        (article.title, canon, article.insights, now, existing["id"]),
                     )
                     updated_count += 1
+                    by_canonical[canon] = {**existing, "title": article.title, "insights": article.insights}
             else:
                 cur.execute(
                     """
                     INSERT INTO scraper_articles (site_id, title, url, insights, published_at, scraped_at)
                     VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
                     """,
                     (
                         site_id,
                         article.title,
-                        article.url,
+                        canon,
                         article.insights,
                         article.published_at,
                         now,
                     ),
                 )
+                row_id = cur.fetchone()["id"]
                 new_count += 1
+                by_canonical[canon] = {
+                    "id": row_id,
+                    "title": article.title,
+                    "insights": article.insights,
+                    "url": canon,
+                }
 
         cur.execute(
             "UPDATE scraper_sites SET last_scraped_at = %s, updated_at = %s WHERE id = %s",
@@ -201,6 +218,62 @@ def _upsert_articles(site_id: int, articles: list[ScrapedArticle]) -> tuple[int,
         )
 
     return new_count, updated_count
+
+
+def dedupe_articles(site_id: int | None = None) -> dict:
+    """Supprime les doublons (URL canonique, puis titre identique) en gardant la plus ancienne ligne."""
+    removed_url = 0
+    removed_title = 0
+
+    with db_cursor() as cur:
+        where = ""
+        params: list = []
+        if site_id is not None:
+            where = "WHERE site_id = %s"
+            params.append(site_id)
+
+        cur.execute(
+            f"""
+            SELECT id, site_id, title, url
+            FROM scraper_articles
+            {where}
+            ORDER BY id ASC
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+
+        seen_canon: dict[tuple[int, str], int] = {}
+        delete_ids: set[int] = set()
+
+        for row in rows:
+            key = (row["site_id"], canonical_article_url(row["url"]))
+            if key in seen_canon:
+                delete_ids.add(row["id"])
+                removed_url += 1
+            else:
+                seen_canon[key] = row["id"]
+
+        remaining = [r for r in rows if r["id"] not in delete_ids]
+        seen_title: dict[tuple[int, str], int] = {}
+        for row in remaining:
+            title_key = (row["site_id"], (row["title"] or "").strip().lower())
+            if not title_key[1]:
+                continue
+            if title_key in seen_title:
+                delete_ids.add(row["id"])
+                removed_title += 1
+            else:
+                seen_title[title_key] = row["id"]
+
+        for aid in delete_ids:
+            cur.execute("DELETE FROM scraper_articles WHERE id = %s", (aid,))
+
+    return {
+        "removed_duplicates": len(delete_ids),
+        "removed_by_url": removed_url,
+        "removed_by_title": removed_title,
+    }
 
 
 async def scrape_site(site_id: int, fetch_insights: bool = True) -> dict:
@@ -215,6 +288,82 @@ async def scrape_site(site_id: int, fetch_insights: bool = True) -> dict:
         "new_articles": new_count,
         "updated_articles": updated_count,
         "total_found": len(articles),
+    }
+
+
+def _field_value(fields: list[dict], key: str) -> str | None:
+    for row in fields:
+        if row.get("key") == key and row.get("value") is not None:
+            return str(row["value"])
+    return None
+
+
+def _field_confidence(fields: list[dict], key: str) -> float:
+    for row in fields:
+        if row.get("key") == key:
+            return float(row.get("confidence") or 0)
+    return 0.0
+
+
+def _persist_analysis(article_id: int, fields: list[dict]) -> None:
+    published_raw = _field_value(fields, "published_at")
+    insights = _field_value(fields, "insights")
+    title = _field_value(fields, "title")
+    title_conf = _field_confidence(fields, "title")
+    now = datetime.now(timezone.utc)
+
+    published_at = None
+    if published_raw:
+        try:
+            published_at = datetime.fromisoformat(published_raw.replace("Z", "+00:00"))
+        except ValueError:
+            published_at = None
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            UPDATE scraper_articles
+            SET
+              published_at = COALESCE(%s, published_at),
+              insights = COALESCE(%s, insights),
+              title = CASE WHEN %s AND %s IS NOT NULL THEN %s ELSE title END,
+              scraped_at = %s
+            WHERE id = %s
+            """,
+            (
+                published_at,
+                insights,
+                title_conf >= 0.9,
+                title,
+                title,
+                now,
+                article_id,
+            ),
+        )
+
+
+async def analyze_article(article_id: int, persist: bool = False) -> dict:
+    article = get_article(article_id)
+    if not article:
+        raise ValueError("Article not found")
+
+    payload = await analyze_article_page(article["url"])
+    analyzed_at = datetime.now(timezone.utc)
+
+    if persist and payload.get("fields"):
+        _persist_analysis(article_id, payload["fields"])
+
+    return {
+        "article_id": article_id,
+        "url": article["url"],
+        "analyzed_at": analyzed_at,
+        "persisted": bool(persist and payload.get("fields")),
+        "http_status": payload.get("http_status", 0),
+        "fields": payload.get("fields") or [],
+        "dates_found": payload.get("dates_found") or [],
+        "sections": payload.get("sections") or [],
+        "tags": payload.get("tags") or [],
+        "warnings": payload.get("warnings") or [],
     }
 
 

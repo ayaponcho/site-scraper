@@ -65,6 +65,20 @@ def remove_site(site_id: int):
         raise HTTPException(status_code=404, detail="Site introuvable")
 
 
+@router.post("/{site_id}/dedupe-articles", response_model=dict)
+def dedupe_site_articles(site_id: int):
+    try:
+        site = service.get_site(site_id)
+    except Exception as exc:
+        raise_if_db_error(exc)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site introuvable")
+    try:
+        return service.dedupe_articles(site_id=site_id)
+    except Exception as exc:
+        rethrow_as_http(exc)
+
+
 async def _run_scrape(site_id: int):
     await service.scrape_site(site_id)
 

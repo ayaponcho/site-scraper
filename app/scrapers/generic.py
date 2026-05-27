@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from app.config import settings
 from app.scrape_errors import raise_http_for_scrape_error
 from app.scrapers.base import ScrapedArticle
+from app.url_utils import canonical_article_url
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +35,30 @@ def _normalize_url(base: str, href: str) -> str | None:
     return absolute
 
 
+LISTING_PATH_EXCLUDES = (
+    "/tag/",
+    "/category/",
+    "/author/",
+    "/page/",
+    "/search/",
+    "/newsletter",
+)
+
+
 def _looks_like_article(url: str, base_host: str) -> bool:
     parsed = urlparse(url)
-    if parsed.netloc and parsed.netloc != base_host:
+    base_norm = base_host.lower().removeprefix("www.")
+    host_norm = (parsed.netloc or "").lower().removeprefix("www.")
+    if host_norm and host_norm != base_norm:
         return False
     path = parsed.path.lower()
+    if any(ex in path for ex in LISTING_PATH_EXCLUDES):
+        return False
+    if path.startswith("/reports/tag"):
+        return False
+    if "datareportal.com" in host_norm:
+        if not path.startswith("/reports/") or path.startswith("/reports/tag"):
+            return False
     if any(hint in path for hint in ARTICLE_PATH_HINTS):
         return True
     segments = [s for s in path.split("/") if s]
@@ -135,6 +155,10 @@ async def scrape_generic_listing(list_url: str, fetch_insights: bool = True) -> 
                 title = re.sub(r"\s+", " ", title)
 
         if len(title) < 12 or not _looks_like_article(url, base_host):
+            continue
+
+        url = canonical_article_url(url)
+        if url in seen:
             continue
 
         seen.add(url)

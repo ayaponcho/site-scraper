@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app import service
 from app.db_errors import raise_if_db_error
-from app.schemas import ArticleOut
+from app.schemas import ArticleAnalysisOut, ArticleOut
 
 router = APIRouter(prefix="/articles", tags=["articles"])
 
@@ -34,3 +34,19 @@ def get_article(article_id: int):
     if not row:
         raise HTTPException(status_code=404, detail="Article introuvable")
     return {"article": ArticleOut(**row)}
+
+
+@router.post("/{article_id}/analyze", response_model=dict)
+async def analyze_article(
+    article_id: int,
+    persist: bool = Query(default=False, description="Enregistrer published_at, insights et titre en BDD"),
+):
+    try:
+        result = await service.analyze_article(article_id, persist=persist)
+    except ValueError as exc:
+        if str(exc) == "Article not found":
+            raise HTTPException(status_code=404, detail="Article introuvable") from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise_if_db_error(exc)
+    return {"analysis": ArticleAnalysisOut(**result)}

@@ -48,3 +48,40 @@ class ScrapeResult(BaseModel):
     new_articles: int
     updated_articles: int
     total_found: int
+
+
+class AnalysisFieldOut(BaseModel):
+    key: str
+    label: str
+    value: str | int | float | None = None
+    raw: str | None = None
+    source: str
+    confidence: float
+
+
+class AnalysisDateOut(BaseModel):
+    kind: str
+    raw: str
+    parsed: str | None = None
+    source: str
+    confidence: float
+
+
+class AnalysisSectionOut(BaseModel):
+    type: str
+    text: str
+    level: int | None = None
+    index: int | None = None
+
+
+class ArticleAnalysisOut(BaseModel):
+    article_id: int
+    url: str
+    analyzed_at: datetime
+    persisted: bool
+    http_status: int
+    fields: list[AnalysisFieldOut]
+    dates_found: list[AnalysisDateOut]
+    sections: list[AnalysisSectionOut]
+    tags: list[str]
+    warnings: list[str]
