@@ -4,9 +4,9 @@
 
 name: CI
 
+# Push main → uniquement deploy-ssh.yml (verify + déploiement).
+# CI ici = filet de sécurité sur les PR avant merge.
 on:
-  push:
-    branches: [main, master]
   pull_request:
     branches: [main, master]
 
