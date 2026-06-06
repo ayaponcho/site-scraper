@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 
 import psycopg2.extras
 
-from app.db import db_cursorfrom app.scrapers.analyze import analyze_article_page
+from app.db import db_cursor
+from app.scrapers.analyze import analyze_article_page
 from app.scrapers.base import ScrapedArticle
 from app.scrapers.gartner import scrape_gartner_listing
 from app.scrapers.generic import scrape_generic_listing

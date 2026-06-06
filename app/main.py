@@ -6,13 +6,13 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db import check_db
-from app.routes import articles, sites
+from app.routes import articles, sites, url_analyze
 from app.scrape_errors import rethrow_as_http
 from app import service
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "0.1.8"
+APP_VERSION = "0.1.9"
 
 app = FastAPI(
     title="Site Scraper API",
@@ -70,6 +70,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 app.include_router(sites.router, prefix="/v1")
 app.include_router(articles.router, prefix="/v1")
+app.include_router(url_analyze.router, prefix="/v1")
 
 
 @app.get("/health")
