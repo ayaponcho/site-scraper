@@ -74,7 +74,7 @@ Après deploy réussi :
 
 ```bash
 curl -s https://email.targetmania.com/site-scraper-api/health
-# Attendu : {"status":"ok","database":true,"version":"0.1.5"}
+# Attendu : {"status":"ok","database":true,"version":"0.2.0"}
 # Si "version":"0.1.3" → l’ancienne image tourne encore (POST /analyze → 404)
 
 curl -s -X POST "https://email.targetmania.com/site-scraper-api/v1/articles/1/analyze"
@@ -102,7 +102,7 @@ cd /home/debian/tgm-deploy
 docker compose -f docker-compose.prod.yml build --no-cache site-scraper
 docker compose -f docker-compose.prod.yml up -d site-scraper
 docker exec tgm-deploy-site-scraper wget -qO- http://127.0.0.1:8080/health
-# doit afficher "version":"0.1.5"
+# doit afficher "version":"0.2.0"
 docker exec nginx nginx -s reload 2>/dev/null || true
 ```
 
@@ -110,7 +110,7 @@ docker exec nginx nginx -s reload 2>/dev/null || true
 
 ```bash
 curl -s https://email.targetmania.com/site-scraper-api/health
-# {"status":"ok","database":true,"version":"0.1.5"}
+# {"status":"ok","database":true,"version":"0.2.0"}
 ```
 
 ## Dev local
@@ -121,7 +121,7 @@ Si **Analyser la page** renvoie `Not Found` en local :
 cd docker/site-scraper
 docker compose up --build -d site-scraper
 curl -s http://127.0.0.1:3020/health
-# doit inclure "version":"0.1.5"
+# doit inclure "version":"0.2.0"
 ```
 
 Test manuel : GitHub → Actions → Deploy site-scraper → Run workflow
