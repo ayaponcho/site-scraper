@@ -1,0 +1,136 @@
+{
+  "ruleType": "GEO",
+  "label": "Generative Engine Optimization — règles de visibilité G-SoV",
+  "locale": "fr",
+  "version": "1.0",
+  "description": "Règles dérivées par rétro-ingénierie de la méthodologie G-SoV (Generative Share of Voice). Elles gouvernent la simulation d'intentions, la génération de réponses LLM, la détection de mentions de marque et le calcul du score de visibilité pondéré.",
+
+  "globalRules": [
+    "Chaque intent simulé doit correspondre à une requête réaliste formulée par un utilisateur cible (ICP) — pas une requête générique ni un test technique.",
+    "La réponse LLM simulée doit être vraisemblable pour le modèle ciblé (ton, longueur, structure), pas un idéal marketing.",
+    "Détecter systématiquement quatre signaux par intent : mention explicite, mention comparative, prominence de recommandation, rationale de citation.",
+    "Le score pondéré reflète la valeur commerciale de la mention : recommandation primaire > alternative mentionnée > mention passante.",
+    "Calculer un score de confiance par intent, en tenant compte de l'alignement sémantique requête/marque et de la maturité de la présence digitale de la marque.",
+    "Le G-SoV global est le ratio score obtenu / score maximum théorique, exprimé en pourcentage.",
+    "Identifier les gaps : intents à fort volume commercial où la marque n'est pas mentionnée — ce sont les opportunités de contenu prioritaires.",
+    "Distinguer les intents à haute valeur commerciale (buyer intent, comparatif outil) des intents génériques (thought leadership, inspirationnel) pour pondérer l'analyse.",
+    "Signaler explicitement la variance estimée (±%) liée à l'indisponibilité de la marque dans les données d'entraînement des LLMs.",
+    "La synthèse doit être en français, ton pro et direct. Chaque intent est documenté avec query simulée, réponse simulée, tags de détection et score de confiance."
+  ],
+
+  "thresholds": {
+    "primaryRecommendationScore": 3,
+    "mentionedAlternativeScore": 2,
+    "passingMentionScore": 1,
+    "notMentionedScore": 0,
+    "strongGSoVPercent": 70,
+    "mediumGSoVPercent": 45,
+    "weakGSoVPercent": 44,
+    "highConfidence": 75,
+    "mediumConfidence": 55,
+    "lowConfidence": 54,
+    "varianceEstimatePercent": 15
+  },
+
+  "intentSimulation": {
+    "description": "Règles de construction des intents simulés.",
+    "rules": [
+      "Couvrir au minimum 5 à 8 intents par analyse, répartis sur le funnel : awareness, consideration, decision, fidélisation.",
+      "Chaque intent doit avoir une requête différente dans sa formulation (lexique, structure, longueur) pour simuler la diversité réelle des utilisateurs.",
+      "Inclure au moins un intent à faible déclencheur de marque (ex : thought leadership générique) pour tester les limites de visibilité.",
+      "Inclure au moins deux intents à fort déclencheur commercial (ex : 'quel outil pour X', 'comparatif de solutions Y').",
+      "Les requêtes doivent être formulées dans la langue de l'ICP cible (ici : français, registre pro B2B).",
+      "Un intent = une requête plausible, pas un mot-clé SEO brut."
+    ]
+  },
+
+  "llmResponseSimulation": {
+    "description": "Règles de simulation des réponses LLM.",
+    "rules": [
+      "La réponse simulée doit refléter le comportement probable d'un LLM généraliste (GPT-4, Claude, Gemini) — pas une réponse idéale.",
+      "Si la marque est peu présente dans les données d'entraînement, la réponse simulée doit refléter cette sous-représentation (mention conditionnelle ou absente).",
+      "Les réponses doivent inclure des alternatives concurrentes réalistes pour simuler le contexte comparatif réel.",
+      "Le tone doit rester neutre et informatif — les LLMs ne font pas de publicité.",
+      "La longueur simulée doit être cohérente avec le type de requête : courte pour un fait, longue pour un comparatif ou une recommandation stratégique."
+    ]
+  },
+
+  "detectionSignals": {
+    "description": "Les quatre signaux à détecter dans chaque réponse LLM simulée.",
+    "signals": {
+      "explicitMention": {
+        "label": "Mention explicite",
+        "description": "Le nom de la marque ou du produit est cité tel quel dans la réponse.",
+        "weight": "obligatoire pour tout score > 0"
+      },
+      "comparativeMention": {
+        "label": "Mention comparative",
+        "description": "La marque est citée dans un contexte de comparaison avec d'autres solutions.",
+        "weight": "signal de pertinence contextuelle"
+      },
+      "recommendationProminence": {
+        "label": "Prominence de recommandation",
+        "description": "Position de la marque dans la réponse : première recommandation, alternative, ou mention incidente.",
+        "weight": "détermine le score pondéré (3/2/1)"
+      },
+      "citationRationale": {
+        "label": "Rationale de citation",
+        "description": "La raison pour laquelle la marque est citée : gain de temps, différenciation, autorité, cas d'usage spécifique.",
+        "weight": "signal de qualité sémantique — un rationale fort indique une association robuste marque/bénéfice"
+      }
+    }
+  },
+
+  "scoringRules": {
+    "description": "Règles de calcul du score de visibilité pondéré par intent.",
+    "pointsScale": {
+      "primaryRecommendation": {
+        "points": 3,
+        "criteria": "La marque est la première ou principale recommandation dans la réponse LLM."
+      },
+      "mentionedAlternative": {
+        "points": 2,
+        "criteria": "La marque est citée comme alternative crédible à une recommandation principale."
+      },
+      "passingMention": {
+        "points": 1,
+        "criteria": "La marque est mentionnée incidemment, sans recommandation ni mise en contexte fort."
+      },
+      "notMentioned": {
+        "points": 0,
+        "criteria": "La marque n'apparaît pas dans la réponse simulée."
+      }
+    },
+    "gSoVFormula": "G-SoV (%) = (somme des scores obtenus) / (nombre d'intents × 3) × 100",
+    "confidenceScoreRules": [
+      "Le score de confiance par intent reflète la probabilité que la réponse simulée corresponde à un LLM réel.",
+      "Facteurs haussiers : requête très ciblée sur le cas d'usage de la marque, marque bien référencée publiquement, présence de contenu tiers (médias, avis, études).",
+      "Facteurs baissiers : marque récente ou peu indexée, requête générique, forte concurrence sur le segment.",
+      "Exprimer la confiance en % avec niveau qualitatif : high (≥75%), medium (55–74%), low (<55%).",
+      "Déclarer une variance globale estimée (ex : ±10–15%) sur le G-SoV final."
+    ]
+  },
+
+  "outputFormat": {
+    "description": "Structure de sortie attendue pour chaque analyse G-SoV.",
+    "requiredFields": [
+      "kpis : score total pondéré, G-SoV%, nombre de mentions primaires/alternatives/passantes, confiance globale",
+      "intentCards : pour chaque intent — query simulée, réponse LLM simulée, tags de détection, score en points, score de confiance en %",
+      "barChart : visualisation du score par intent",
+      "gapAnalysis : intents à 0 pt avec explication du défaut de déclencheur",
+      "strategicRecommendations : au moins 2 recommandations de contenu pour améliorer le G-SoV sur les gaps identifiés",
+      "confidenceNote : déclaration de variance et facteurs limitants"
+    ]
+  },
+
+  "contentStrategySignals": {
+    "description": "Règles d'interprétation des gaps pour orienter la stratégie de contenu GEO.",
+    "rules": [
+      "Un gap sur un intent à fort déclencheur commercial (comparatif, outil, solution) est prioritaire sur un gap aspirationnel.",
+      "Un gap récurrent sur le registre 'résultats mesurables' (pipeline, conversion, ROI) indique un manque de preuves chiffrées dans le corpus de la marque.",
+      "Un gap sur des intents génériques (thought leadership, inspiration) est acceptable si le positionnement de la marque est délibérément niche.",
+      "Pour améliorer le G-SoV, produire du contenu qui : (1) nomme explicitement la catégorie d'usage, (2) cite des données tierces, (3) est repris ou cité par des publications sectorielles.",
+      "La fréquence et la diversité du contenu de la marque sur le web sont corrélées à sa fréquence de mention dans les LLMs — l'indexabilité GEO est cumulatrice."
+    ]
+  }
+}
