@@ -27,7 +27,11 @@ def post_site(body: SiteCreate):
             url=str(body.url),
             scraper_type=body.scraper_type,
             enabled=body.enabled,
+            keywords=body.keywords,
+            keywords_mode=body.keywords_mode,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise_if_db_error(exc)
     return {"site": SiteOut(**site)}
@@ -47,7 +51,12 @@ def get_site(site_id: int):
 @router.patch("/{site_id}", response_model=dict)
 def patch_site(site_id: int, body: SiteUpdate):
     try:
-        site = service.update_site(site_id, body.model_dump(exclude_unset=True))
+        payload = body.model_dump(exclude_unset=True)
+        if "url" in payload and payload["url"] is not None:
+            payload["url"] = str(payload["url"])
+        site = service.update_site(site_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise_if_db_error(exc)
     if not site:

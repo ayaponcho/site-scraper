@@ -1,10 +1,28 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 
-ScraperType = Literal["generic", "gartner"]
+ScraperType = Literal["generic", "gartner", "rss"]
+KeywordsMode = Literal["any", "all"]
+
+
+def _clean_keywords(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        k = str(raw).strip()
+        if not k:
+            continue
+        key = k.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(k)
+    return out
 
 
 class SiteCreate(BaseModel):
@@ -12,6 +30,27 @@ class SiteCreate(BaseModel):
     url: HttpUrl
     scraper_type: ScraperType = "generic"
     enabled: bool = True
+    keywords: list[str] = Field(default_factory=list)
+    keywords_mode: KeywordsMode = "any"
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def coerce_keywords(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            parts = re_split_keywords(v)
+            return parts
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        return []
+
+    @model_validator(mode="after")
+    def validate_rss_keywords(self) -> "SiteCreate":
+        self.keywords = _clean_keywords(self.keywords)
+        if self.scraper_type == "rss" and not self.keywords:
+            raise ValueError("Au moins un mot-clé est obligatoire pour un flux RSS")
+        return self
 
 
 class SiteUpdate(BaseModel):
@@ -19,6 +58,36 @@ class SiteUpdate(BaseModel):
     url: HttpUrl | None = None
     scraper_type: ScraperType | None = None
     enabled: bool | None = None
+    keywords: list[str] | None = None
+    keywords_mode: KeywordsMode | None = None
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def coerce_keywords(cls, v: Any) -> list[str] | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return re_split_keywords(v)
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        return None
+
+    @model_validator(mode="after")
+    def validate_rss_keywords(self) -> "SiteUpdate":
+        if self.keywords is not None:
+            self.keywords = _clean_keywords(self.keywords)
+        if self.scraper_type == "rss" and self.keywords is not None and not self.keywords:
+            raise ValueError("Au moins un mot-clé est obligatoire pour un flux RSS")
+        return self
+
+
+def re_split_keywords(raw: str) -> list[str]:
+    parts: list[str] = []
+    for chunk in raw.replace(";", ",").replace("\n", ",").split(","):
+        k = chunk.strip()
+        if k:
+            parts.append(k)
+    return parts
 
 
 class SiteOut(BaseModel):
@@ -30,6 +99,8 @@ class SiteOut(BaseModel):
     last_scraped_at: datetime | None
     created_at: datetime
     article_count: int = 0
+    keywords: list[str] = Field(default_factory=list)
+    keywords_mode: KeywordsMode = "any"
 
 
 class ArticleOut(BaseModel):

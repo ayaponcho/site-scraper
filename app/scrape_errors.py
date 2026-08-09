@@ -41,6 +41,8 @@ def rethrow_as_http(exc: Exception) -> None:
     """Erreurs BDD puis scrape/réseau → HTTPException JSON pour le front."""
     if isinstance(exc, HTTPException):
         raise exc
+    if isinstance(exc, ValueError):
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         raise_if_db_error(exc)
     except HTTPException:

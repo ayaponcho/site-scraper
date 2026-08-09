@@ -9,12 +9,40 @@ from app.scrapers.analyze import analyze_article_page
 from app.scrapers.base import ScrapedArticle
 from app.scrapers.gartner import scrape_gartner_listing
 from app.scrapers.generic import scrape_generic_listing
+from app.scrapers.rss import scrape_rss_feed
 from app.url_utils import canonical_article_url
 
 logger = logging.getLogger(__name__)
 
 
+def _normalize_keywords(raw) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return [k.strip() for k in raw.split(",") if k.strip()]
+    if isinstance(raw, (list, tuple)):
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            k = str(item).strip()
+            if not k:
+                continue
+            key = k.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(k)
+        return out
+    return []
+
+
 def _row_to_site(row: dict) -> dict:
+    mode = row.get("keywords_mode") or "any"
+    if mode not in ("any", "all"):
+        mode = "any"
     return {
         "id": row["id"],
         "name": row["name"],
@@ -24,6 +52,8 @@ def _row_to_site(row: dict) -> dict:
         "last_scraped_at": row["last_scraped_at"],
         "created_at": row["created_at"],
         "article_count": row.get("article_count", 0),
+        "keywords": _normalize_keywords(row.get("keywords")),
+        "keywords_mode": mode,
     }
 
 
@@ -57,25 +87,57 @@ def get_site(site_id: int) -> dict | None:
         return _row_to_site(row) if row else None
 
 
-def create_site(name: str, url: str, scraper_type: str, enabled: bool) -> dict:
+def create_site(
+    name: str,
+    url: str,
+    scraper_type: str,
+    enabled: bool,
+    keywords: list[str] | None = None,
+    keywords_mode: str = "any",
+) -> dict:
+    kw = _normalize_keywords(keywords)
+    if scraper_type == "rss" and not kw:
+        raise ValueError("Au moins un mot-clé est obligatoire pour un flux RSS")
+    mode = keywords_mode if keywords_mode in ("any", "all") else "any"
+
     with db_cursor() as cur:
         cur.execute(
             """
-            INSERT INTO scraper_sites (name, url, scraper_type, enabled)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO scraper_sites (name, url, scraper_type, enabled, keywords, keywords_mode)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
-            (name, url, scraper_type, enabled),
+            (name, url, scraper_type, enabled, psycopg2.extras.Json(kw), mode),
         )
         row = cur.fetchone()
         return _row_to_site({**row, "article_count": 0})
 
 
 def update_site(site_id: int, fields: dict) -> dict | None:
-    allowed = {"name", "url", "scraper_type", "enabled"}
+    allowed = {"name", "url", "scraper_type", "enabled", "keywords", "keywords_mode"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
         return get_site(site_id)
+
+    current = get_site(site_id)
+    if not current:
+        return None
+
+    if "keywords" in updates:
+        updates["keywords"] = _normalize_keywords(updates["keywords"])
+        updates["keywords"] = psycopg2.extras.Json(updates["keywords"])
+
+    if "keywords_mode" in updates and updates["keywords_mode"] not in ("any", "all"):
+        updates["keywords_mode"] = "any"
+
+    next_type = updates.get("scraper_type", current["scraper_type"])
+    next_kw = (
+        _normalize_keywords(fields.get("keywords"))
+        if "keywords" in fields and fields.get("keywords") is not None
+        else current.get("keywords") or []
+    )
+    if next_type == "rss" and not next_kw:
+        raise ValueError("Au moins un mot-clé est obligatoire pour un flux RSS")
 
     set_clause = ", ".join(f"{key} = %({key})s" for key in updates)
     updates["id"] = site_id
@@ -151,6 +213,15 @@ def get_article(article_id: int) -> dict | None:
 async def _scrape_site_listing(site: dict, fetch_insights: bool) -> list[ScrapedArticle]:
     scraper_type = site["scraper_type"]
     list_url = site["url"]
+    if scraper_type == "rss":
+        keywords = _normalize_keywords(site.get("keywords"))
+        if not keywords:
+            raise ValueError("Au moins un mot-clé est obligatoire pour un flux RSS")
+        return await scrape_rss_feed(
+            list_url,
+            keywords=keywords,
+            keywords_mode=site.get("keywords_mode") or "any",
+        )
     if scraper_type == "gartner" or "gartner.com" in list_url:
         return await scrape_gartner_listing(list_url, fetch_insights=fetch_insights)
     return await scrape_generic_listing(list_url, fetch_insights=fetch_insights)
