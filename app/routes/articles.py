@@ -12,13 +12,32 @@ def get_articles(
     site_id: int | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None, description="Recherche titre / insights / URL"),
+    keyword: str | None = Query(default=None, description="Mot-clé dans titre ou insights"),
+    has_analysis: bool | None = Query(default=None),
+    scraper_type: str | None = Query(default=None, description="generic | gartner | rss"),
+    since_hours: int | None = Query(default=None, ge=1, le=24 * 90),
 ):
     try:
-        rows, total = service.list_articles(site_id=site_id, limit=limit, offset=offset)
+        rows, total = service.list_articles(
+            site_id=site_id,
+            limit=limit,
+            offset=offset,
+            q=q,
+            keyword=keyword,
+            has_analysis=has_analysis,
+            scraper_type=scraper_type,
+            since_hours=since_hours,
+        )
     except Exception as exc:
         raise_if_db_error(exc)
+    articles = []
+    for row in rows:
+        payload = dict(row)
+        payload.pop("site_scraper_type", None)
+        articles.append(ArticleOut(**payload))
     return {
-        "articles": [ArticleOut(**row) for row in rows],
+        "articles": articles,
         "total": total,
         "limit": limit,
         "offset": offset,

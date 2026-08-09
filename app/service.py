@@ -162,18 +162,57 @@ def delete_site(site_id: int) -> bool:
         return cur.fetchone() is not None
 
 
-def list_articles(site_id: int | None, limit: int, offset: int) -> tuple[list[dict], int]:
+def list_articles(
+    site_id: int | None,
+    limit: int,
+    offset: int,
+    *,
+    q: str | None = None,
+    keyword: str | None = None,
+    has_analysis: bool | None = None,
+    scraper_type: str | None = None,
+    since_hours: int | None = None,
+) -> tuple[list[dict], int]:
     params: list = []
-    where = ""
+    clauses: list[str] = []
+
     if site_id is not None:
-        where = "WHERE a.site_id = %s"
+        clauses.append("a.site_id = %s")
         params.append(site_id)
+
+    q_clean = (q or "").strip()
+    if q_clean:
+        clauses.append("(a.title ILIKE %s OR COALESCE(a.insights, '') ILIKE %s OR a.url ILIKE %s)")
+        like = f"%{q_clean}%"
+        params.extend([like, like, like])
+
+    kw_clean = (keyword or "").strip()
+    if kw_clean:
+        clauses.append("(a.title ILIKE %s OR COALESCE(a.insights, '') ILIKE %s)")
+        like_kw = f"%{kw_clean}%"
+        params.extend([like_kw, like_kw])
+
+    if has_analysis is True:
+        clauses.append("a.analysis_json IS NOT NULL")
+    elif has_analysis is False:
+        clauses.append("a.analysis_json IS NULL")
+
+    if scraper_type in ("generic", "gartner", "rss"):
+        clauses.append("s.scraper_type = %s")
+        params.append(scraper_type)
+
+    if since_hours is not None and since_hours > 0:
+        clauses.append("a.scraped_at >= now() - (%s * interval '1 hour')")
+        params.append(since_hours)
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     with db_cursor() as cur:
         cur.execute(
             f"""
             SELECT COUNT(*)::int AS total
             FROM scraper_articles a
+            JOIN scraper_sites s ON s.id = a.site_id
             {where}
             """,
             params,
@@ -182,7 +221,7 @@ def list_articles(site_id: int | None, limit: int, offset: int) -> tuple[list[di
 
         cur.execute(
             f"""
-            SELECT a.*, s.name AS site_name
+            SELECT a.*, s.name AS site_name, s.scraper_type AS site_scraper_type
             FROM scraper_articles a
             JOIN scraper_sites s ON s.id = a.site_id
             {where}
