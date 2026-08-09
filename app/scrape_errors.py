@@ -11,14 +11,26 @@ def raise_http_for_scrape_error(exc: Exception) -> None:
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         url = str(exc.request.url)
+        host = (exc.request.url.host or "").lower()
         if status == 403:
+            if "reddit.com" in host:
+                hint = (
+                    "Reddit bloque souvent les IP datacenter (403). "
+                    "Décochez ce flux pour scraper le reste, ou retirez-le de la thématique GEO."
+                )
+            elif "gartner.com" in host:
+                hint = (
+                    "Gartner bloque souvent les requêtes automatisées depuis un serveur. "
+                    "Testez une autre source ou un proxy (SCRAPE_HTTP_PROXY)."
+                )
+            else:
+                hint = (
+                    "Le site refuse les requêtes automatisées depuis le serveur. "
+                    "Réessayez plus tard ou retirez cette source de la sélection."
+                )
             raise HTTPException(
                 status_code=502,
-                detail=(
-                    f"Accès refusé (403) par le site source : {url}. "
-                    "Gartner bloque souvent les requêtes automatisées depuis un serveur. "
-                    "Testez une autre source ou ajoutez un site avec le scraper « générique »."
-                ),
+                detail=f"Accès refusé (403) par le site source : {url}. {hint}",
             ) from exc
         if status == 404:
             raise HTTPException(

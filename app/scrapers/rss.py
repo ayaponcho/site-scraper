@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from time import mktime
+from urllib.parse import urlparse
 
 import feedparser
 import httpx
@@ -21,6 +22,29 @@ from app.url_utils import canonical_article_url
 logger = logging.getLogger(__name__)
 
 _WS_RE = re.compile(r"\s+")
+
+
+def _resolve_feed_url(feed_url: str) -> str:
+    """Normalise certaines URLs (Reddit préfère souvent old.reddit pour le RSS)."""
+    parsed = urlparse(feed_url)
+    host = (parsed.netloc or "").lower()
+    if host in ("www.reddit.com", "reddit.com") and parsed.path.endswith(".rss"):
+        return f"https://old.reddit.com{parsed.path}"
+    return feed_url
+
+
+def _feed_headers(feed_url: str) -> dict[str, str]:
+    host = (urlparse(feed_url).netloc or "").lower()
+    headers = {
+        "User-Agent": settings.user_agent,
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+        "Cache-Control": "no-cache",
+    }
+    if "reddit.com" in host:
+        # Reddit exige un UA identifiable ; les IP cloud restent souvent bloquées (403).
+        headers["User-Agent"] = "TargetMania-Veille/0.3 (+https://targetmania.com; rss-reader)"
+    return headers
 
 
 def _html_to_text(raw: str | None) -> str:
@@ -127,12 +151,8 @@ async def scrape_rss_feed(
         raise ValueError("Au moins un mot-clé est obligatoire pour un flux RSS")
 
     mode = keywords_mode if keywords_mode in ("any", "all") else "any"
-
-    headers = {
-        "User-Agent": settings.user_agent,
-        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
-    }
+    resolved = _resolve_feed_url(feed_url)
+    headers = _feed_headers(resolved)
 
     async with httpx.AsyncClient(
         timeout=settings.scrape_timeout_seconds,
@@ -141,7 +161,7 @@ async def scrape_rss_feed(
         proxy=settings.scrape_http_proxy or None,
     ) as client:
         try:
-            response = await client.get(feed_url)
+            response = await client.get(resolved)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise_http_for_scrape_error(exc)
