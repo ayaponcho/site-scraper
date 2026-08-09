@@ -49,10 +49,10 @@ HEALTH=$("${COMPOSE[@]}" exec -T site-scraper python -c \
   "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/health').read().decode())" 2>/dev/null || true)
 echo "$HEALTH"
 
-if echo "$HEALTH" | grep -qE '"version":"0\.2\.[0-9]+"'; then
-  echo "✓ site-scraper 0.2.x — route POST /v1/analyze-url/audit disponible"
+if echo "$HEALTH" | grep -qE '"version":"0\.(2|3)\.[0-9]+"'; then
+  echo "✓ site-scraper $HEALTH — RSS / analyze / audit OK (attendu ≥ 0.3.0 pour RSS)"
 elif echo "$HEALTH" | grep -q '"version"'; then
-  echo "⚠ version obsolète ($HEALTH) — attendu 0.2.0+ pour l'audit landing"
+  echo "⚠ version obsolète ($HEALTH) — attendu 0.3.0+ pour le type RSS"
   echo "  docker logs tgm-deploy-site-scraper --tail 50"
   exit 1
 else

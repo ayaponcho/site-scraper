@@ -74,12 +74,8 @@ Après deploy réussi :
 
 ```bash
 curl -s https://email.targetmania.com/site-scraper-api/health
-# Attendu : {"status":"ok","database":true,"version":"0.2.0"}
-# Si "version":"0.1.3" → l’ancienne image tourne encore (POST /analyze → 404)
-
-curl -s -X POST "https://email.targetmania.com/site-scraper-api/v1/articles/1/analyze"
-# 404 "Article introuvable" = route OK (article id absent)
-# 404 "Not Found" = ancienne version encore active
+# Attendu : {"status":"ok","database":true,"version":"0.3.0"}
+# Si "version":"0.2.0" → image sans RSS (POST sites type rss → 422)
 ```
 
 ## Deploy manuel (si GitHub Actions bloqué)
