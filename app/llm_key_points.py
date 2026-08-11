@@ -16,20 +16,25 @@ logger = logging.getLogger(__name__)
 KEY_POINTS_SYSTEM = """Tu es un analyste éditorial pour des posts LinkedIn / X (Twitter).
 À partir d’un article (titre + extrait), extrais les points importants au format JSON strict.
 
+LANGUE (obligatoire) :
+- Rédige TOUT le contenu textuel du JSON en français (summary, key_points, quotes, angles, why_it_matters).
+- Même si le texte source est en anglais ou dans une autre langue : traduis et reformule en français.
+- Les tags restent courts, en français ou sigles usuels (ex. ia, llm, saas), minuscules, sans #.
+- Les clés JSON restent en anglais (summary, key_points, …) ; seules les valeurs sont en français.
+
 Réponds UNIQUEMENT avec un objet JSON de cette forme :
 {
-  "summary": "résumé en 1-3 phrases",
-  "key_points": ["point factuel 1", "point 2", "..."],
-  "quotes": ["citation courte éventuelle"],
+  "summary": "résumé en français, 1-3 phrases",
+  "key_points": ["point factuel 1 en français", "point 2", "..."],
+  "quotes": ["citation courte éventuelle — traduite en français si besoin, ou laissée telle quelle si déjà claire"],
   "tags": ["tag1", "tag2"],
-  "angles": ["angle de post social 1", "angle 2"],
-  "why_it_matters": "pourquoi c’est utile pour une audience tech / SaaS / IA"
+  "angles": ["angle de post social 1 en français", "angle 2"],
+  "why_it_matters": "pourquoi c’est utile pour une audience tech / SaaS / IA (en français)"
 }
 
 Règles :
 - 3 à 8 key_points max, concrets (chiffres, nouveautés, impacts).
-- tags en minuscules, sans #.
-- Si le texte est pauvre, dis-le dans summary et remplis key_points au mieux.
+- Si le texte est pauvre, dis-le dans summary (en français) et remplis key_points au mieux.
 - Pas de markdown hors JSON.
 """
 
@@ -152,9 +157,11 @@ def _build_user_prompt(*, title: str, url: str, insights: str, sections: list[di
         body = "\n".join(section_bits)
     body = body[:8000]
     return (
+        "Consigne : produis le JSON d’analyse entièrement en français "
+        "(traduis le contenu source si nécessaire).\n\n"
         f"Titre : {title.strip() or '(sans titre)'}\n"
         f"URL : {url.strip()}\n\n"
-        f"--- Contenu ---\n{body or '(vide)'}\n"
+        f"--- Contenu (langue d’origine quelconque) ---\n{body or '(vide)'}\n"
     )
 
 
