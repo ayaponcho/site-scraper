@@ -6,6 +6,7 @@ import psycopg2.extras
 
 from app.db import db_cursor
 from app.scrapers.analyze import analyze_article_page
+from app.llm_key_points import extract_key_points, normalize_key_points
 from app.scrapers.base import ScrapedArticle
 from app.scrapers.gartner import scrape_gartner_listing
 from app.scrapers.generic import scrape_generic_listing
@@ -548,34 +549,168 @@ def update_article_analysis_fields(article_id: int, fields: list[dict]) -> dict:
         "sections": base.get("sections") or [],
         "tags": base.get("tags") or [],
         "warnings": base.get("warnings") or [],
+        "key_points": base.get("key_points"),
     }
 
     _persist_analysis(article_id, normalized, result, force_columns=True)
     return result
 
 
-async def analyze_article(article_id: int, persist: bool = True) -> dict:
+def update_article_analysis_key_points(article_id: int, key_points: dict) -> dict:
     article = get_article(article_id)
     if not article:
         raise ValueError("Article not found")
 
-    payload = await analyze_article_page(article["url"])
+    now = datetime.now(timezone.utc)
+    base = article.get("analysis_json") or {}
+    if isinstance(base, str):
+        base = json.loads(base)
+    if not isinstance(base, dict):
+        base = {}
+
+    normalized_kp = normalize_key_points(key_points, source="manual")
+    fields = base.get("fields") or []
+    if not isinstance(fields, list):
+        fields = []
+
+    result = {
+        "article_id": article_id,
+        "url": article["url"],
+        "analyzed_at": now,
+        "persisted": True,
+        "http_status": base.get("http_status", 200),
+        "fields": fields,
+        "dates_found": base.get("dates_found") or [],
+        "sections": base.get("sections") or [],
+        "tags": base.get("tags") or [],
+        "warnings": base.get("warnings") or [],
+        "key_points": normalized_kp,
+    }
+
+    _persist_analysis(article_id, fields if fields else [], result, force_columns=True)
+    return result
+
+
+async def analyze_article(
+    article_id: int,
+    persist: bool = True,
+    *,
+    refetch: bool = False,
+) -> dict:
+    """Analyse un article pour points clés LLM + métadonnées.
+
+    Par défaut : utilise le contenu déjà en BDD (title / insights), sans re-télécharger
+    la page source (évite les 403 Reddit/Gartner depuis IP datacenter).
+    refetch=True tente d’enrichir via HTML live, en soft-fail si le site bloque.
+    """
+    article = get_article(article_id)
+    if not article:
+        raise ValueError("Article not found")
+
     analyzed_at = datetime.now(timezone.utc)
+    base = article.get("analysis_json") or {}
+    if isinstance(base, str):
+        try:
+            base = json.loads(base)
+        except json.JSONDecodeError:
+            base = {}
+    if not isinstance(base, dict):
+        base = {}
+
+    stored_insights = (article.get("insights") or "").strip()
+    stored_title = (article.get("title") or "").strip()
+    warnings: list[str] = []
+
+    fields: list = list(base.get("fields") or []) if isinstance(base.get("fields"), list) else []
+    dates_found: list = list(base.get("dates_found") or []) if isinstance(base.get("dates_found"), list) else []
+    sections: list = list(base.get("sections") or []) if isinstance(base.get("sections"), list) else []
+    tags: list = list(base.get("tags") or []) if isinstance(base.get("tags"), list) else []
+    http_status = int(base.get("http_status") or 0)
+
+    if refetch:
+        try:
+            payload = await analyze_article_page(str(article["url"]))
+        except Exception as exc:
+            logger.warning("Analyze refetch failed for article %s: %s", article_id, exc)
+            payload = {
+                "http_status": 0,
+                "fields": [],
+                "dates_found": [],
+                "sections": [],
+                "tags": [],
+                "warnings": [f"Impossible de recharger la page : {exc}"],
+            }
+        page_warnings = list(payload.get("warnings") or [])
+        fetch_failed = any("Impossible de charger" in str(w) or "Impossible de recharger" in str(w) for w in page_warnings)
+        if fetch_failed and stored_insights:
+            warnings.extend(page_warnings)
+            warnings.append(
+                "Analyse basée sur le contenu déjà scrapé (insights en BDD) — page source inaccessible."
+            )
+        elif fetch_failed and not stored_insights:
+            warnings.extend(page_warnings)
+        else:
+            fields = payload.get("fields") or fields
+            dates_found = payload.get("dates_found") or dates_found
+            sections = payload.get("sections") or sections
+            tags = payload.get("tags") or tags
+            http_status = int(payload.get("http_status") or http_status)
+            warnings.extend(page_warnings)
+    else:
+        warnings.append(
+            "Analyse sur contenu déjà en BDD (pas de re-téléchargement de la page source)."
+        )
+
+    insights_from_fields = _field_value(fields, "insights") if fields else None
+    insights_text = (
+        stored_insights
+        or (insights_from_fields or "").strip()
+        or ""
+    )
+    title_text = (
+        stored_title
+        or (_field_value(fields, "title") if fields else None)
+        or ""
+    )
+
+    if not insights_text and not title_text:
+        raise ValueError(
+            "Aucun contenu à analyser (insights / titre vides). "
+            "Relancez un scrape quand le site est accessible, ou ajoutez des insights manuellement."
+        )
+
+    key_points = await extract_key_points(
+        title=str(title_text),
+        url=str(article["url"]),
+        insights=insights_text,
+        sections=sections if isinstance(sections, list) else [],
+    )
+
+    if key_points.get("source") == "heuristic":
+        warnings.append(
+            "Points clés en mode heuristique — définis OPENAI_API_KEY sur site-scraper pour l’analyse LLM."
+        )
 
     result = {
         "article_id": article_id,
         "url": article["url"],
         "analyzed_at": analyzed_at,
         "persisted": False,
-        "http_status": payload.get("http_status", 0),
-        "fields": payload.get("fields") or [],
-        "dates_found": payload.get("dates_found") or [],
-        "sections": payload.get("sections") or [],
-        "tags": payload.get("tags") or [],
-        "warnings": payload.get("warnings") or [],
+        "http_status": http_status,
+        "fields": fields,
+        "dates_found": dates_found,
+        "sections": sections,
+        "tags": tags or key_points.get("tags") or [],
+        "warnings": warnings,
+        "key_points": key_points,
     }
 
-    if persist and (result["fields"] or result["dates_found"] or result["sections"]):
+    if persist and (
+        result["fields"]
+        or result["dates_found"]
+        or result["sections"]
+        or result["key_points"]
+    ):
         result["persisted"] = True
         _persist_analysis(article_id, result["fields"], result)
 

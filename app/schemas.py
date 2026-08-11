@@ -144,6 +144,10 @@ class AnalysisFieldsUpdateBody(BaseModel):
     fields: list[AnalysisFieldUpdate] = Field(min_length=1)
 
 
+class AnalysisKeyPointsUpdateBody(BaseModel):
+    key_points: dict[str, Any]
+
+
 class AnalysisDateOut(BaseModel):
     kind: str
     raw: str
@@ -170,3 +174,4 @@ class ArticleAnalysisOut(BaseModel):
     sections: list[AnalysisSectionOut]
     tags: list[str]
     warnings: list[str]
+    key_points: dict[str, Any] | None = None
